@@ -1,20 +1,18 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const fal = require('@fal-ai/serverless-client');
+const Replicate = require("replicate");
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-let currentStatus = 'Idle';
-
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const FAL_KEY = process.env.FAL_KEY;
+const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN;
 
-fal.config({
-  credentials: FAL_KEY,
+const replicate = new Replicate({
+  auth: REPLICATE_API_TOKEN,
 });
 
 app.post('/generate-image', async (req, res) => {
@@ -28,24 +26,17 @@ app.post('/generate-image', async (req, res) => {
       model: "gpt-4",
       messages: [{
         role: "system",
-        content: `You are a t-shirt design expert. Your task is to create a prompt for generating a photorealistic image of a t-shirt with a design printed on it. Follow these instructions precisely:
-
-1. The output MUST ALWAYS be a t-shirt mock-up. Never describe the design separately from the t-shirt.
-2. The design MUST be clearly printed on the front of the t-shirt, as if it were a real, physical printed t-shirt.
-3. Describe how the design looks when printed on the fabric, including any texture or interaction with the t-shirt material.
-4. The t-shirt should be hanging on a fancy, elegant hanger.
-5. The background should be clean, simple, and clear (preferably white or light-colored).
-6. Specify the t-shirt color that best complements the design.
-7. Include details about studio-quality lighting to enhance the presentation of the printed design and t-shirt.
-8. Emphasize that this is a photo-realistic image of a physical t-shirt with the design printed on it, not a digital mockup or flat design.
-9. Begin your description with: "A photorealistic image of a t-shirt hanging on an elegant hanger, featuring a design that is..."
-
-Keep the refined prompt under 1,000 characters.`
+        content: `You are a t-shirt design expert. Create a concise prompt (max 500 characters) for generating a photorealistic image of a t-shirt with a design printed on it. Include:
+1. T-shirt color and hanging position
+2. Design description, emphasizing it's printed on the shirt
+3. Background description (simple and clear)
+4. Lighting details
+Begin with: "Photorealistic t-shirt:"`
       }, {
         role: "user",
-        content: `Create a detailed description for generating a photorealistic image of a t-shirt with this design printed on it: ${userPrompt}`
+        content: `Create a brief description for a t-shirt with this design: ${userPrompt}`
       }],
-      max_tokens: 500
+      max_tokens: 100
     }, {
       headers: {
         'Authorization': `Bearer ${OPENAI_API_KEY}`,
@@ -55,28 +46,29 @@ Keep the refined prompt under 1,000 characters.`
 
     const refinedPrompt = openaiResponse.data.choices[0].message.content;
     console.log('Refined prompt:', refinedPrompt);
+    console.log('Refined prompt length:', refinedPrompt.length);
 
-    // Step 2: Call Fal AI for image generation
-    console.log('Calling Fal AI for image generation...');
-    const result = await fal.subscribe("fal-ai/flux/schnell", {
-      input: {
-        prompt: refinedPrompt,
-        negative_prompt: "floating design, separate graphic, digital mockup, flat design, low quality, blurry, distorted, wrinkled t-shirt, cluttered background, t-shirt outline, sketch",
-        num_inference_steps: 50,
-        guidance_scale: 7.5,
-        width: 768,
-        height: 1024
-      },
-      logs: true,
-      onQueueUpdate: (update) => {
-        if (update.status === "IN_PROGRESS") {
-          update.logs.map((log) => log.message).forEach(console.log);
+    // Truncate if still too long
+    const truncatedPrompt = refinedPrompt.slice(0, 500);
+
+    // Step 2: Call Replicate for image generation
+    console.log('Calling Replicate for image generation...');
+    const output = await replicate.run(
+      "black-forest-labs/flux-schnell",
+      {
+        input: {
+          prompt: truncatedPrompt,
+          negative_prompt: "floating design, separate graphic, digital mockup, flat design, low quality, blurry, distorted, wrinkled t-shirt, cluttered background, t-shirt outline, sketch",
+          num_inference_steps: 50,
+          guidance_scale: 7.5,
+          width: 768,
+          height: 1024
         }
-      },
-    });
+      }
+    );
 
     console.log('Image generated successfully');
-    res.json({ imageUrl: result.images[0].url });
+    res.json({ imageUrl: output[0] });
   } catch (error) {
     console.error('Detailed error:', error.response ? error.response.data : error.message);
     res.status(500).json({ error: 'An error occurred while processing your request.', details: error.message });
